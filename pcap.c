@@ -126,8 +126,6 @@ int create_socket_for_pkt(pcap_t *p);
 #include <errno.h>
 #include <poll.h>
 #define SOCK_PATH "/home/vinoth/Documents/programs/tcpdump/client/unix_sock"
-#define SOCK_PATH_1 "/home/vinoth/Documents/programs/tcpdump/client/unix_sock_1"
-int globalval =0;
 int check_bcm_device(pcap_if_list_t *devlistp, char *err_str);
 pcap_t * bcmDevice_create(const char *device, char *ebuf, int *is_ours);
 /********************************************/
@@ -4022,23 +4020,10 @@ int create_socket_for_pkt(pcap_t *p)
 		exit(1);
 	}
 
-	server_sockaddr.sun_family = AF_UNIX;
-    if(globalval ==0)
-    {
-
-        strcpy(server_sockaddr.sun_path, SOCK_PATH); 
-
-        unlink(SOCK_PATH);	
-    }
-    else
-    {
-
-        strcpy(server_sockaddr.sun_path, SOCK_PATH_1); 
-
-        unlink(SOCK_PATH_1);	
-
-    }
-	len = sizeof(server_sockaddr);
+    server_sockaddr.sun_family = AF_UNIX;
+    strcpy(server_sockaddr.sun_path, SOCK_PATH); 
+	
+    len = sizeof(server_sockaddr);
 	rc = bind(server_sock, (struct sockaddr *) &server_sockaddr, len);
 	if (rc == -1){
 		printf("BIND ERROR \n");
