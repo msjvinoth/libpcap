@@ -119,7 +119,18 @@ struct rtentry;		/* declarations in <net/if.h> */
 #ifdef PCAP_SUPPORT_RDMASNIFF
 #include "pcap-rdmasniff.h"
 #endif
+/********************************************/
+int create_socket_for_pkt(pcap_t *p);
 
+#include <sys/un.h>
+#include <errno.h>
+#include <poll.h>
+#define SOCK_PATH "/home/vinoth/Documents/programs/tcpdump/client/unix_sock"
+#define SOCK_PATH_1 "/home/vinoth/Documents/programs/tcpdump/client/unix_sock_1"
+int globalval =0;
+int check_bcm_device(pcap_if_list_t *devlistp, char *err_str);
+pcap_t * bcmDevice_create(const char *device, char *ebuf, int *is_ours);
+/********************************************/
 #ifdef _WIN32
 /*
  * DllMain(), required when built as a Windows DLL.
@@ -132,7 +143,6 @@ BOOL WINAPI DllMain(
 {
 	return (TRUE);
 }
-
 /*
  * Start WinSock.
  * Exported in case some applications using WinPcap called it,
@@ -447,6 +457,7 @@ static struct capture_source_type {
 #ifdef PCAP_SUPPORT_RDMASNIFF
 	{ rdmasniff_findalldevs, rdmasniff_create },
 #endif
+    {check_bcm_device , bcmDevice_create},
 	{ NULL, NULL }
 };
 
@@ -1487,6 +1498,12 @@ pcap_parse_source(const char *source, char **schemep, char **userinfop,
 	*portp = NULL;
 	*pathp = NULL;
 
+	if(strcmp(source,"bcmPort") == 0)
+	{
+		type = PCAP_SRC_BCM;
+		return 0;
+	}
+
 	/*
 	 * RFC 3986 says:
 	 *
@@ -2041,11 +2058,13 @@ pcap_create(const char *device, char *errbuf)
 	/*
 	 * OK, try it as a regular network interface.
 	 */
+
 	p = pcap_create_interface(device_str, errbuf);
 	if (p == NULL) {
 		/*
 		 * We assume the caller filled in errbuf.
 		 */
+
 		free(device_str);
 		return (NULL);
 	}
@@ -2178,7 +2197,6 @@ pcap_t *
 pcap_create_common(char *ebuf, size_t size)
 {
 	pcap_t *p;
-
 	p = pcap_alloc_pcap_t(ebuf, size);
 	if (p == NULL)
 		return (NULL);
@@ -2412,6 +2430,7 @@ pcap_activate(pcap_t *p)
 	 */
 	if (pcap_check_activated(p))
 		return (PCAP_ERROR_ACTIVATED);
+
 	status = p->activate_op(p);
 	if (status >= 0) {
 		/*
@@ -2474,7 +2493,6 @@ pcap_open_live(const char *device, int snaplen, int promisc, int to_ms, char *er
 	 */
 	if (pcap_parsesrcstr(device, &srctype, host, port, name, errbuf))
 		return (NULL);
-
 	if (srctype == PCAP_SRC_IFREMOTE) {
 		/*
 		 * Although we already have host, port and iface, we prefer
@@ -3988,3 +4006,134 @@ pcap_set_parser_debug(int value)
 	pcap_debug = value;
 }
 #endif
+
+
+int create_socket_for_pkt(pcap_t *p)
+{
+
+	int  rc;
+	int server_sock;
+	struct sockaddr_un server_sockaddr;
+	memset(&server_sockaddr, 0, sizeof(struct sockaddr_un));
+	int len =0;
+	server_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (server_sock == -1){
+		printf("SOCKET ERROR\n");
+		exit(1);
+	}
+
+	server_sockaddr.sun_family = AF_UNIX;
+    if(globalval ==0)
+    {
+
+        strcpy(server_sockaddr.sun_path, SOCK_PATH); 
+
+        unlink(SOCK_PATH);	
+    }
+    else
+    {
+
+        strcpy(server_sockaddr.sun_path, SOCK_PATH_1); 
+
+        unlink(SOCK_PATH_1);	
+
+    }
+	len = sizeof(server_sockaddr);
+	rc = bind(server_sock, (struct sockaddr *) &server_sockaddr, len);
+	if (rc == -1){
+		printf("BIND ERROR \n");
+		close(server_sock);
+		exit(1);
+	}
+	p->snapshot = 1518;
+	p->fd = server_sock;
+	p->read_op = pcap_bcm_read;
+	p->setfilter_op = install_bpf_program;
+	p->linktype = DLT_EN10MB;
+	p->offset = 2;
+
+
+	//	close(server_sock);
+
+	return 0;
+}
+int pcap_bcm_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
+{
+
+	char buf[1518];
+	memset(buf, 0, sizeof(buf));
+	int len =0 , peer_sock =0;
+	int bytes_rec = 0;
+	struct pcap_pkthdr  pcap_header;
+	struct pollfd fds;
+	int timeout =0;
+	int retval =0;
+	fds.fd = p->fd;
+	fds.events = POLLIN;
+
+	timeout = (3 * 60 * 1000);
+	printf("waiting to recvfrom...\n");
+	retval = poll(&fds, 1, timeout);
+
+	if(retval < 0)
+	{
+		printf("poll failed \r\n");
+		close(p->fd);
+		exit(1);
+	}
+	if (retval == 0)
+	{
+		printf("  poll() timed out.  End program.\n");
+		close(p->fd);
+		exit(1);
+	}
+
+	printf("packet on socket\n");
+	if(fds.fd == p->fd)
+	{
+		bytes_rec = recvfrom(p->fd , buf, sizeof(buf) , 0, (struct sockaddr *) &peer_sock, &len);
+		if (bytes_rec == -1){
+			printf("RECVFROM ERROR \n");
+			close(p->fd);
+		}
+		else {
+			pcap_header.caplen  = bytes_rec;
+			pcap_header.len     = bytes_rec;
+
+			printf("DATA RECEIVED = %s length : %d\n", buf , bytes_rec);
+			callback(user , &pcap_header , buf); 
+		}
+	}
+	return 1;
+}
+int check_bcm_device(pcap_if_list_t *devlistp, char *err_str)
+{
+	printf("%s \n" , __FUNCTION__);
+	return 0;
+}
+int bcmPort_activate_op(pcap_t *p)
+{
+	p->opt.nonblock =0;
+	create_socket_for_pkt(p);		
+	return 0;
+}
+
+pcap_t * 
+bcmDevice_create(const char *device, char *ebuf, int *is_ours)
+{
+
+	printf("%s \n" , __FUNCTION__);
+	pcap_t *p;
+
+	*is_ours = (!strncmp(device, "bcmPort", 7));
+	if (! *is_ours)
+		return NULL;
+	p = pcap_create_common(ebuf, sizeof (pcap_t));
+	if (p == NULL)
+		return (NULL);
+	p->activate_op = bcmPort_activate_op;
+	return (p);
+
+
+
+}

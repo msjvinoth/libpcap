@@ -383,6 +383,7 @@ struct oneshot_userdata {
 #endif
 
 int	pcap_offline_read(pcap_t *, int, pcap_handler, u_char *);
+int pcap_bcm_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user);
 
 #include <stdarg.h>
 

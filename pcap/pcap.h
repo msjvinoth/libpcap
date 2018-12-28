@@ -616,7 +616,7 @@ PCAP_API const char *pcap_lib_version(void);
 #define PCAP_SRC_FILE		2	/* local savefile */
 #define PCAP_SRC_IFLOCAL	3	/* local network interface */
 #define PCAP_SRC_IFREMOTE	4	/* interface on a remote host, using RPCAP */
-
+#define PCAP_SRC_BCM        5
 /*
  * The formats allowed by pcap_open() are the following:
  * - file://path_and_filename [opens a local file]
