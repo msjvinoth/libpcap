@@ -125,9 +125,21 @@ int create_socket_for_pkt(pcap_t *p);
 #include <sys/un.h>
 #include <errno.h>
 #include <poll.h>
-#define SOCK_PATH "/home/vinoth/Documents/programs/tcpdump/client/unix_sock"
+#define SOCK_PATH "/home/vinoth/Documents/programs/tcpdump/client/unix"
 int check_bcm_device(pcap_if_list_t *devlistp, char *err_str);
 pcap_t * bcmDevice_create(const char *device, char *ebuf, int *is_ours);
+
+struct bcmPcapInfo
+{
+    char name[50];
+    int  fd;
+    char fileName[108]; /* from struct sockaddr_un sun_path standard */
+};
+
+struct bcmPcapInfo bcmportInfo[10];
+struct pollfd pollArray[10];
+int    fdIndex;
+
 /********************************************/
 #ifdef _WIN32
 /*
@@ -4021,15 +4033,22 @@ int create_socket_for_pkt(pcap_t *p)
 	}
 
     server_sockaddr.sun_family = AF_UNIX;
-    strcpy(server_sockaddr.sun_path, SOCK_PATH); 
+    strcpy(server_sockaddr.sun_path, bcmportInfo[fdIndex].fileName); 
 	
     len = sizeof(server_sockaddr);
 	rc = bind(server_sock, (struct sockaddr *) &server_sockaddr, len);
 	if (rc == -1){
-		printf("BIND ERROR \n");
+
+        perror("error :");
+		printf("BIND ERROR on %s\n" , server_sockaddr.sun_path);
 		close(server_sock);
 		exit(1);
 	}
+    
+    bcmportInfo[fdIndex].fd = server_sock;
+    pollArray[fdIndex].fd = server_sock;
+    pollArray[fdIndex].events = POLLIN;
+
 	p->snapshot = 1518;
 	p->fd = server_sock;
 	p->read_op = pcap_bcm_read;
@@ -4037,7 +4056,7 @@ int create_socket_for_pkt(pcap_t *p)
 	p->linktype = DLT_EN10MB;
 	p->offset = 2;
 
-
+    fdIndex++;
 	//	close(server_sock);
 
 	return 0;
@@ -4050,15 +4069,13 @@ int pcap_bcm_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 	int len =0 , peer_sock =0;
 	int bytes_rec = 0;
 	struct pcap_pkthdr  pcap_header;
-	struct pollfd fds;
 	int timeout =0;
 	int retval =0;
-	fds.fd = p->fd;
-	fds.events = POLLIN;
+    int loop = 0;
 
 	timeout = (3 * 60 * 1000);
 	printf("waiting to recvfrom...\n");
-	retval = poll(&fds, 1, timeout);
+	retval = poll(pollArray , fdIndex , timeout);
 
 	if(retval < 0)
 	{
@@ -4073,22 +4090,25 @@ int pcap_bcm_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 		exit(1);
 	}
 
-	printf("packet on socket\n");
-	if(fds.fd == p->fd)
-	{
-		bytes_rec = recvfrom(p->fd , buf, sizeof(buf) , 0, (struct sockaddr *) &peer_sock, &len);
-		if (bytes_rec == -1){
-			printf("RECVFROM ERROR \n");
-			close(p->fd);
-		}
-		else {
-			pcap_header.caplen  = bytes_rec;
-			pcap_header.len     = bytes_rec;
+    printf("packet on socket\n");
+    for(loop =0; loop<fdIndex;loop++)
+    {
+        if(pollArray[loop].fd == p->fd)
+        {
+            bytes_rec = recvfrom(p->fd , buf, sizeof(buf) , 0, (struct sockaddr *) &peer_sock, &len);
+            if (bytes_rec == -1){
+                printf("RECVFROM ERROR \n");
+                close(p->fd);
+            }
+            else {
+                pcap_header.caplen  = bytes_rec;
+                pcap_header.len     = bytes_rec;
 
-			printf("DATA RECEIVED = %s length : %d\n", buf , bytes_rec);
-			callback(user , &pcap_header , buf); 
-		}
-	}
+                printf("DATA RECEIVED = %s length : %d\n", buf , bytes_rec);
+                callback(user , &pcap_header , buf); 
+            }
+        }
+    }
 	return 1;
 }
 int check_bcm_device(pcap_if_list_t *devlistp, char *err_str)
@@ -4109,16 +4129,29 @@ bcmDevice_create(const char *device, char *ebuf, int *is_ours)
 
 	printf("%s \n" , __FUNCTION__);
 	pcap_t *p;
+    char * temp = NULL;
+   
+    if(fdIndex == 10)
+    {
+        printf("Max watches reached. Quitting..\n");
+        exit(1);
+    }
 
 	*is_ours = (!strncmp(device, "bcmPort", 7));
 	if (! *is_ours)
 		return NULL;
+    temp = (char *) device;
+    temp += 7;
+
+    memset(&bcmportInfo[fdIndex] , 0 , sizeof(struct bcmPcapInfo));
+
+    strncpy(bcmportInfo[fdIndex].name , temp , 5);
+    snprintf(bcmportInfo[fdIndex].fileName , 99 , "%s_%s" , SOCK_PATH, temp);
+
+
 	p = pcap_create_common(ebuf, sizeof (pcap_t));
 	if (p == NULL)
 		return (NULL);
 	p->activate_op = bcmPort_activate_op;
 	return (p);
-
-
-
 }
